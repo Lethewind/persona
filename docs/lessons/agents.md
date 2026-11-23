@@ -1,5 +1,11 @@
 # Lessons: Claude Code, Codex, and herdr
 
+## An App update can leave a socket without its server (#13190)
+
+- A Unix socket file proves only that a process bound that path at some point. After the Codex App removed its IPC router, the old `<CODEX_HOME>/ipc/ipc.sock` remained and a file-type check still advertised writable chats. Check that a listener accepts connections, with a short timeout and one probe per home per list, and handle a later connection failure as a normal control refusal.
+- Match transport logs to the host that owns the threads. In App build 29803, `hostId=durable transport=websocket` describes a cloud connection; the local host still spawns a private stdio app-server. A socket path in a permission allowlist, or a daemon path behind an inactive process flag, does not establish an available endpoint. Inspect process arguments and actual listeners read-only before choosing a route.
+- Keep App chat identity separate from transport availability. History and project grouping remain useful without control; a missing bus must not advertise send / stop / settings, accept a queued message, or invite another app-server to become the thread's writer. Preserve uncertain delivery after a request has actually gone out. See [Codex support](../integrations/codex.md#sessions-in-the-codex-desktop-app-app-local-ipc).
+
 ## Detached approvals and hub-owned device methods (#12918)
 
 - When a prepared or detachable `PreToolUse` approval releases its hook with `approval.WaitingText` or `approval.ClarifyingText`, Claude Code writes that message into the transcript as an ordinary `tool_result` carrying the original `tool_use_id`. Transcript reconciliation for terminal-answered permissions (`syncPlanInteractions`) must skip `p.prepared != nil` and non-final approval tool results, or the retained 24-hour card is dismissed as `answered_by=terminal` a second later.
@@ -156,6 +162,14 @@ Codex bridge does. A login shell need not have `personad` on PATH. Render after 
 callers the node's reported absolute executable as data for the existing scoped CLI. Bound the metadata read;
 unavailable metadata or unknown capabilities omit unverified hints, not the assignment.
 Keep the existing project context, approval snapshot and attachment order intact.
+
+A handoff note that reads as an instruction gets followed (#12995). A Codex worker at high reasoning effort read
+"use the terminal entry below for a separate session on this assignment" as a step of its task: it handed its whole
+assignment to a child in the same checkout, telling it the parent would coordinate and verify, then polled the
+child's process, `git status` and transcript until it finished. Nothing said the caller still owns its assignment,
+that the child shares its directory and permissions, or that the child reports to the supervisor, not to the caller.
+The note now says each wherever an entry is offered. The server still allows writable children in the caller's
+directory: continuations rely on them (`tasks_continuation_test.go`).
 
 - A guest conversation's session id and tools are registered before the node starts it: Claude Code lists the
   Persona MCP server's tools as it starts, a later `guestSet` makes that first list empty, and a connected MCP server
@@ -1600,3 +1614,9 @@ embedded resource back into native `USER_INPUT.content` with a `Content of perso
 Removing only the snapshot XML leaves that label visible. Check the native export before blaming replay, and clean
 both the companion and pane history projections. Require the complete leading Persona resource envelope so ordinary
 labels and other URI schemes survive; keep embedded-resource transport intact and version the history format.
+
+## A persisted triage wait needs answerable evidence
+
+A read-only session skips card creation, but must not skip evidence validation. Normalize model `blocked / user`
+results with no grounded question or authorization link before storing them and when displaying old records.
+Otherwise a guess appears as "Awaiting your reply" with nothing in the chat to answer.

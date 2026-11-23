@@ -18,9 +18,12 @@ import (
 // ---- acting ----
 
 // accountExhaustionRetryAllowed applies the separate, opt-in budget for an
-// exhausted upstream account pool to coding Agents. Assistant conversations
-// keep mechanical recovery: protected continuations re-resolve their launcher
-// and model. retries counts continuations already sent in the transient run.
+// exhausted upstream account pool to coding Agents, including task-leader
+// Agents. Every Assistant conversation keeps its existing mechanical recovery:
+// main chat, leader and background-supervision conversations, side chats,
+// scheduled-task and health chats, and meeting rooms. Only the first three
+// re-resolve their launcher and model on protected continuations. retries
+// counts continuations already sent in the transient run.
 func accountExhaustionRetryAllowed(c proto.Session, retries, limit int) bool {
 	if c.Assistant {
 		return true
@@ -105,8 +108,7 @@ func (s *Service) actOn(ctx context.Context, v *workView, machine string, c prot
 		return
 	}
 	// Missing evidence is not a user decision. Authorization links have their own relay and manual card path.
-	if w.On == proto.WaitUser && w.By == "model" && len(w.Questions) == 0 && w.Link == nil {
-		*w = proto.WorkState{TurnAt: w.TurnAt, At: w.At, By: w.By, Artifacts: w.Artifacts}
+	if unsupportedUserWait(w) {
 		return
 	}
 	// On the user: a card. Without the triage none: the session shows its error and the apps' Retry as before.

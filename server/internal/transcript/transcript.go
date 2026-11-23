@@ -96,6 +96,8 @@ type entry struct {
 	} `json:"quotaLimits"`
 	// system/scheduled_task_fire: the /loop prompt that is about to run.
 	Prompt string `json:"prompt"`
+	// ContextBreakdown is an optional native context category split when an engine writes one into the transcript.
+	ContextBreakdown *proto.ContextBreakdown `json:"context_breakdown"`
 }
 
 type block struct {
@@ -148,7 +150,9 @@ type Meta struct {
 	restartCodex     tokenuse.CodexTotal
 	// ContextWindow is the model's context window when the transcript says it (a Codex rollout's token_count carries
 	// model_context_window); 0 for Claude Code, whose transcripts do not (node/contextwindow.go knows by model id).
-	ContextWindow    int
+	ContextWindow int
+	// ContextStats holds bounded category byte accumulators (and any native exact breakdown) for ContextBreakdown.
+	ContextStats     ContextStats
 	OutputTokens     int // total generated, counted once per message
 	Compactions      int
 	Turns            int // user prompts
@@ -208,6 +212,8 @@ type Meta struct {
 	// turn_duration / an interrupt), no turn started after it. Unlike !TurnOpen it is false when the lines say nothing
 	// (a tail read from mid-turn).
 	TurnClosed bool
+	// CodexClosedTurnID is the id on the closing record, when the rollout supplies it.
+	CodexClosedTurnID string
 	// The closing record, even when it produces no visible item (e.g. Codex without a duration).
 	turnEndedAt time.Time
 	turnEndSeq  int
@@ -503,8 +509,8 @@ func ParseLine(seq int, line []byte, meta *Meta) []proto.Item {
 			}
 			it.SourceFingerprint = fingerprint
 		}
-		if it.Role != "system" && !it.TS.IsZero() && it.TS.After(meta.LastActivity) {
-			meta.LastActivity = it.TS
+		if !meta.Codex {
+			meta.observeActivity(*it)
 		}
 		meta.trackActivity(*it)
 		meta.trackPlan(*it)
@@ -537,6 +543,12 @@ func ParseLine(seq int, line []byte, meta *Meta) []proto.Item {
 		}
 	}
 	return items
+}
+
+func (m *Meta) observeActivity(it proto.Item) {
+	if it.Role != "system" && !it.TS.IsZero() && it.TS.After(m.LastActivity) {
+		m.LastActivity = it.TS
+	}
 }
 
 func (m *Meta) endTurn(seq int, at time.Time) {
@@ -603,13 +615,23 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 			// What the latest reply saw was compacted away, and the boundary's postTokens leaves out the system prompt
 			// and tools (the next reply sees about four times as much, #9207): unknown until that reply.
 			meta.ContextTokens, meta.ContextCompacted = 0, true
+			meta.ContextStats.ResetCompacted()
 		}
+	case e.Type == "system" && !e.IsSidechain && e.ContextBreakdown != nil:
+		meta.ContextStats.SetNative(e.ContextBreakdown)
 	case e.Type == "assistant" && e.Message != nil && e.Message.Usage != nil && !e.IsSidechain:
 		u := e.Message.Usage
 		// A gateway's sum of a whole turn is not a context, nor the zeros it reports on the turn's other replies
 		// (usage.go): the last real one stands.
 		if tokens := int(u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens); tokens > 0 && PlausibleContext(tokens, 0) {
 			meta.ContextTokens, meta.ContextCompacted = tokens, false
+			if e.ContextBreakdown != nil {
+				meta.ContextStats.SetNative(e.ContextBreakdown)
+			} else {
+				meta.ContextStats.Native = nil
+			}
+		} else if e.ContextBreakdown != nil {
+			meta.ContextStats.SetNative(e.ContextBreakdown)
 		}
 		meta.observeOutput(e.Message.ID, int(u.OutputTokens))
 	}
@@ -817,6 +839,7 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 			meta.handedBack(agent, report)
 		}
 		if e.IsCompactSummary {
+			meta.ContextStats.SystemBytes += estimateWeightedBytes(rawString(e.Message.Content))
 			it := mk(0, "system", proto.KindNotice)
 			it.Text = CompactSummaryNotice
 			return []proto.Item{it}
@@ -828,6 +851,7 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 		}
 		var s string
 		if raw := bytes.TrimSpace(e.Message.Content); len(raw) > 0 && raw[0] == '"' && unmarshalLine(raw, &s) == nil {
+			meta.observeUserText(s, e.IsMeta)
 			if strings.Contains(s, "<task-notification>") {
 				meta.taskFinished(s, e.Timestamp)
 			}
@@ -859,6 +883,7 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 		for i, b := range blocks {
 			switch b.Type {
 			case "text":
+				meta.observeUserText(b.Text, e.IsMeta)
 				if strings.Contains(b.Text, "<task-notification>") {
 					meta.taskFinished(b.Text, e.Timestamp)
 				}
@@ -881,6 +906,7 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 					continue
 				}
 				if img := imageOf(b); img != nil {
+					meta.ContextStats.ConversationBytes += imageTokenBytesEstimate
 					it := mk(i, "user", proto.KindImage)
 					it.Image = img
 					out = append(out, it)
@@ -891,6 +917,7 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 					continue
 				}
 				text, imgs := toolResultContent(b.Content)
+				meta.ContextStats.ToolOutputBytes += estimateWeightedBytes(text) + int64(len(imgs))*imageTokenBytesEstimate
 				meta.backgroundStarted(b.ToolUseID, text, b.IsError, e.Timestamp)
 				it := mk(i, "user", proto.KindToolResult)
 				it.ToolUseID = b.ToolUseID
@@ -934,6 +961,7 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 				if strings.TrimSpace(b.Text) == "" {
 					continue
 				}
+				meta.ContextStats.ConversationBytes += estimateWeightedBytes(b.Text)
 				if t, ok := thinkingAsText(b.Text); ok {
 					if t != "" {
 						it := mk(i, "assistant", proto.KindThinking)
@@ -950,10 +978,12 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 				if strings.TrimSpace(b.Thinking) == "" {
 					continue
 				}
+				meta.ContextStats.ConversationBytes += estimateWeightedBytes(b.Thinking)
 				it := mk(i, "assistant", proto.KindThinking)
 				it.Text = clip(b.Thinking)
 				out = append(out, it)
 			case "tool_use", "server_tool_use":
+				meta.ContextStats.ToolOutputBytes += int64(len(b.Name)) + estimateWeightedBytes(string(b.Input))
 				if b.Name == handbackTool {
 					// a subagent handing its report back to the session that launched it: its last words, not a step
 					if report := meta.handbackCall(b.ID, b.Input); report != "" {
