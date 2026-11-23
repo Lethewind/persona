@@ -156,7 +156,9 @@ type CardPayload struct {
 	Data any    `json:"data"`
 }
 
-// BotMenu is application.bot.menu_v6: who pressed which entry of the bot's menu (its event key).
+// BotMenu is application.bot.menu_v6: who pressed which entry of the bot's menu (its event key). Who pressed it is
+// event.operator.operator_id (open_id, union_id, user_id), beside operator.operator_name, as Lark documents the event
+// (https://open.feishu.cn/document/client-docs/bot-v3/events/menu).
 type BotMenu struct {
 	Operator struct {
 		OperatorID UserID `json:"operator_id"`

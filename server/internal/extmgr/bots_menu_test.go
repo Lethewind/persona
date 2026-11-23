@@ -8,17 +8,47 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // botMenuEvent is a press on the bot's menu (application.bot.menu_v6) by from.
 func botMenuEvent(from, key string) []byte { return botMenuEventID(from, key, "ev_menu_"+from+"_"+key) }
 
-// botMenuEventID is botMenuEvent with the event's id (a press Feishu delivers again keeps it).
+// botMenuEventID is botMenuEvent with the event's id (a press Feishu delivers again keeps it). Its shape is the one
+// Lark documents for the event (https://open.feishu.cn/document/client-docs/bot-v3/events/menu).
 func botMenuEventID(from, key, id string) []byte {
-	b, _ := json.Marshal(map[string]any{"schema": "2.0", "header": map[string]any{"event_id": id, "event_type": "application.bot.menu_v6"},
-		"event": map[string]any{"operator": map[string]any{"operator_id": map[string]any{"open_id": from}}, "event_key": key,
-			"timestamp": 1795138200}})
+	b, _ := json.Marshal(map[string]any{"schema": "2.0",
+		"header": map[string]any{"event_id": id, "event_type": "application.bot.menu_v6", "create_time": "1795138200000",
+			"token": "", "app_id": "cli_test", "tenant_key": "tk_test"},
+		"event": map[string]any{
+			"operator": map[string]any{"operator_name": "Owner",
+				"operator_id": map[string]any{"union_id": "on_" + from, "user_id": "u_" + from, "open_id": from}},
+			"event_key": key, "timestamp": 1795138200}})
 	return b
+}
+
+// A press the assistant did not take is told to the owner, as a message is, in the private chat (the event names no
+// chat), and let go of: Feishu delivering it again hands it over then.
+func TestBotMenuNotHandedIsToldAndLetGo(t *testing.T) {
+	w := newBotWorld(t)
+	w.pair(t)
+	var mu sync.Mutex
+	refuse := true
+	w.a.on(assistantwire.MethodFeishuMenu, func(json.RawMessage) (any, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if refuse {
+			return nil, &rpc.Error{Code: "fixture_refused", Message: "the assistant broke"}
+		}
+		return map[string]any{}, nil
+	})
+	w.send(t, botMenuEventID("ou_me", "today", "ev_lost"))
+	w.api.find(t, "POST /open-apis/im/v1/messages", `"receive_id":"ou_me"`, "the assistant broke")
+	mu.Lock()
+	refuse = false
+	mu.Unlock()
+	w.send(t, botMenuEventID("ou_me", "today", "ev_lost"))
+	eventually(t, 5*time.Second, "the press handed over again", func() bool { return len(w.a.got(assistantwire.MethodFeishuMenu)) >= 2 })
 }
 
 // The bot's menu: the owner's press goes to the assistant as its key (feishu.menu), anyone else's nowhere, and an

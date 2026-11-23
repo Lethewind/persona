@@ -38,7 +38,11 @@ func (s *Service) FeishuMenu(ctx context.Context, p FeishuMenu) error {
 			turn.pass()
 		}
 	}()
-	if _, err := s.feishuStatus(ctx); err != nil { // as a message's: the chat's state as it is now, before the claim
+	// As a message's: the chat's state as it is now, read before the claim, and what the press is answered with. A
+	// read after the claim that failed would drop a press already taken, which neither the hub nor Feishu hands over
+	// again.
+	st, err := s.feishuStatus(ctx)
+	if err != nil {
 		return &rpc.Error{Code: CodeTryAgain, Message: "the bot's status: " + err.Error()}
 	}
 	if p.EventID != "" {
@@ -54,12 +58,10 @@ func (s *Service) FeishuMenu(ctx context.Context, p FeishuMenu) error {
 	go func() {
 		defer turn.pass()
 		turn.waitTurn()
-		ctx, cancel := context.WithTimeout(feishuSendAs(context.Background(), "menu", "", ""), time.Minute)
+		// The time a message's answer has (feishuMessage), counted from its turn, not from the wait for it.
+		ctx, cancel := context.WithTimeout(feishuSendAs(context.Background(), "menu", "", ""), 3*time.Minute)
 		defer cancel()
-		f, ready := s.feishuFeatures(ctx)
-		if !ready {
-			return
-		}
+		f := st.Features
 		if botMenuWorkbench[p.Key] && !f.Workbench {
 			s.botSay(ctx, i18n.T(s.botLang(ctx), "assistant-feishu_cards.menu_needs_workbench"))
 			return

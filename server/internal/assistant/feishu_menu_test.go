@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -59,6 +60,28 @@ func TestBotMenuRunsItsCommand(t *testing.T) {
 	if p, _, _, _ := off.counts(); p != 0 {
 		t.Fatalf("posted %d cards with the workbench off", p)
 	}
+}
+
+// A press is answered with the bot's status as it was read before the press was taken, as a message is: a status read
+// failing after that does not drop a press already taken.
+func TestBotMenuIsAnsweredWithTheStatusItWasTakenWith(t *testing.T) {
+	e := newWorkbenchEnv(t, workbenchOnFeatures)
+	var mu sync.Mutex
+	reads := 0
+	e.f.answerApp(AppFeishu, FeishuStatusGet, func(json.RawMessage) (any, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if reads++; reads > 1 {
+			return nil, errors.New("manager away")
+		}
+		return FeishuStatus{Ready: true, Enabled: true, Owner: "ou_a", PairedAt: e.pairedAt, PublicURL: testWeb,
+			Features: workbenchOnFeatures}, nil
+	})
+	e.s.feishuForgetStatus()
+	if err := e.s.FeishuMenu(context.Background(), FeishuMenu{Key: "help", EventID: "ev_status"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the help card", func() bool { p, _, _, _ := e.counts(); return p == 1 })
 }
 
 // A press takes its place in the chat's line, as a message does, and is answered in turn: a message sent right after
