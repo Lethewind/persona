@@ -13,7 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/i18n"
 )
 
-// The bot's menu (feishu_menu.go): an entry's key is one of the bot's commands, answered in the private chat as if
+// The bot's menu (modules/lark/menu.go): an entry's key is one of the bot's commands, answered in the private chat as if
 // the owner had sent it; a key it does not know is nothing, and a workbench entry with the workbench off says how to
 // turn it on.
 func TestBotMenuRunsItsCommand(t *testing.T) {
@@ -77,7 +77,7 @@ func TestBotMenuIsAnsweredWithTheStatusItWasTakenWith(t *testing.T) {
 		return FeishuStatus{Ready: true, Enabled: true, Owner: "ou_a", PairedAt: e.pairedAt, PublicURL: testWeb,
 			Features: workbenchOnFeatures}, nil
 	})
-	e.s.feishuForgetStatus()
+	e.s.larkModule().ForgetStatus()
 	if err := e.s.FeishuMenu(context.Background(), FeishuMenu{Key: "help", EventID: "ev_status"}); err != nil {
 		t.Fatal(err)
 	}
