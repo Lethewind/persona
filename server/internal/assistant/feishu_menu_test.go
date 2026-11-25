@@ -17,6 +17,7 @@ import (
 // the owner had sent it; a key it does not know is nothing, and a workbench entry with the workbench off says how to
 // turn it on.
 func TestBotMenuRunsItsCommand(t *testing.T) {
+	needsLarkLayer(t)
 	e := newWorkbenchEnv(t, workbenchOnFeatures)
 	ctx := context.Background()
 	posts := func() int { p, _, _, _ := e.counts(); return p }
@@ -65,6 +66,7 @@ func TestBotMenuRunsItsCommand(t *testing.T) {
 // A press is answered with the bot's status as it was read before the press was taken, as a message is: a status read
 // failing after that does not drop a press already taken.
 func TestBotMenuIsAnsweredWithTheStatusItWasTakenWith(t *testing.T) {
+	needsLarkLayer(t)
 	e := newWorkbenchEnv(t, workbenchOnFeatures)
 	var mu sync.Mutex
 	reads := 0
@@ -88,6 +90,7 @@ func TestBotMenuIsAnsweredWithTheStatusItWasTakenWith(t *testing.T) {
 // it waits for it (here, its card held up on the way out), so a /new pressed and a message sent at once are answered
 // in the order they came. A press made again with the same event id (a handover cut off and repeated) is answered once.
 func TestBotMenuTakesItsPlaceInLine(t *testing.T) {
+	needsLarkLayer(t)
 	e := newWorkbenchEnv(t, workbenchOnFeatures)
 	ctx := context.Background()
 	help := i18n.T("", "assistant-feishu_cards.help_title")
@@ -136,6 +139,7 @@ func TestBotMenuTakesItsPlaceInLine(t *testing.T) {
 
 // A press waits for the message before it: the message's card held up on the way out, the press's card comes after.
 func TestBotMenuWaitsForTheMessageBeforeIt(t *testing.T) {
+	needsLarkLayer(t)
 	e := newWorkbenchEnv(t, workbenchOnFeatures)
 	ctx := context.Background()
 	help := i18n.T("", "assistant-feishu_cards.help_title")
